@@ -133,7 +133,7 @@ public class UnitTest {
         }
 
         List<TestCase> failed = new LinkedList<>();
-        for (int i = 0; i < cases.size() - numSkipped - failed.size(); i++) {
+        for (int i = 0; i < cases.size() - numSkipped; i++) {
             TestCase testCase = service.take().get();
             if (testCase.getError() != null) {
                 failed.add(testCase);
