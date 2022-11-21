@@ -109,7 +109,7 @@ public class UnitTestTest {
         ut.addMethod(UnitTestTest.class.getMethod("sleepFor10"));
         TestCase testCase = ut.buildTestCases("sleepFor10").get(0);
         ut.runTestCases(List.of(testCase), blackHole());
-        assert testCase.getError() == null;
+        assert testCase.finished() && testCase.getError() == null;
     }
 
     public static void infiniteLoop1() {
