@@ -87,17 +87,17 @@ public class UnitTest {
     }
 
     public void addAnnotatedMethodsFromClass(Class<?> c) {
-        for (Method m : c.getMethods()) {
-            if (m.getAnnotation(Test.class) != null &&
-                Modifier.isStatic(m.getModifiers())
+        for (Method method : c.getMethods()) {
+            if (method.getAnnotation(Test.class) != null &&
+                Modifier.isStatic(method.getModifiers())
             ) {
-                this.addMethod(m);
+                this.addMethod(method);
             }
         }
     }
 
-    public void addMethod(Method m) {
-        methods.add(m);
+    public void addMethod(Method method) {
+        methods.add(method);
     }
 
     public void setDefaultTimeout(long defaultTimeout) {
@@ -275,8 +275,8 @@ class TestCase implements Callable<TestCase> {
         );
     }
 
-    public static String getFullMethodName(Method m) {
-        return m.getDeclaringClass().getName() + "." + m.getName();
+    public static String getFullMethodName(Method method) {
+        return method.getDeclaringClass().getName() + "." + method.getName();
     }
 
     public static String formatNanosToMillis(long nanos) {
