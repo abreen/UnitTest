@@ -157,11 +157,6 @@ public class UnitTest {
         return method.getAnnotation(Skip.class) != null ||
                method.getDeclaringClass().getAnnotation(Skip.class) != null;
     }
-
-    public static String getTestDescription(Method method) {
-        Test test = method.getAnnotation(Test.class);
-        return test != null && !test.value().isEmpty() ? test.value() : null;
-    }
 }
 
 class TestCase implements Callable<TestCase> {
@@ -227,7 +222,7 @@ class TestCase implements Callable<TestCase> {
     public void printResult(PrintStream out) {
         out.print("[" + getStatus() + "] ");
         out.print(getFullMethodName(method));
-        String description = UnitTest.getTestDescription(method);
+        String description = getDescription();
         if (description != null) {
             out.print(": " + description);
         }
@@ -266,6 +261,11 @@ class TestCase implements Callable<TestCase> {
 
     private String getDurationString() {
         return (end > start ? formatNanosToMillis(end - start) : "?") + " ms";
+    }
+
+    public String getDescription() {
+        Test test = method.getAnnotation(Test.class);
+        return test != null && !test.value().isEmpty() ? test.value() : null;
     }
 
     public String toString() {

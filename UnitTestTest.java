@@ -10,6 +10,14 @@ import java.util.concurrent.ExecutionException;
 import java.util.List;
 
 public class UnitTestTest {
+    @Test("descriptions should be available")
+    public static void testDescriptions() {
+        UnitTest ut = new UnitTest();
+        ut.addAnnotatedMethodsFromClass(UnitTestTest.class);
+        TestCase testCase = ut.buildTestCases("testDescriptions").get(0);
+        assert testCase.getDescription()
+                       .equals("descriptions should be available");
+    }
 
     public static void missingTestAnnotation() throws AssertionError {
         assert false : "this method should not run because it does not have " +
