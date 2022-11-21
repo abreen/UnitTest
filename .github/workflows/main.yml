@@ -1,4 +1,5 @@
 name: Run tests of UnitTest.java
+run-name: Run tests of UnitTest.java
 on: [push]
 jobs:
   compile-and-test:
