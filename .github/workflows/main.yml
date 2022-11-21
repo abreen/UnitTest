@@ -1,0 +1,20 @@
+name: Run tests of UnitTest.java
+on: [push]
+jobs:
+  compile-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v3
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'adopt'
+          java-version: '11'
+      - name: Compile UnitTest.java and UnitTestTest.java
+        run: javac UnitTest.java UnitTestTest.java
+      - name: Run tests of UnitTest
+        run: java UnitTest UnitTest | tee output.txt
+      - name: Check for test failures
+        run: if grep '^\[.*fail.*\]' output.txt; then exit 1; else exit 0; fi
+      
