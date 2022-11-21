@@ -5,6 +5,8 @@ A simple, one-file implementation of a test framework for Java.
 *   As small as possible, but no smaller. The entire API surface consists of
     three annotations: `@Test`, `@Skip` and `@Timeout()`.
 *   Use `@Test` with any static method to declare the method as a test case.
+    Pass a string to describe the behavior being tested, for example:
+    `@Test("should throw exception when passed a negative number")`
 *   Use `@Skip` on a class or method to temporarily skip test cases.
     `UnitTest.java` will display the test case but not run it.
 *   Use `@Timeout(5000)` to change the amount of time `UnitTest.java` will
