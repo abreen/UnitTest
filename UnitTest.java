@@ -6,6 +6,7 @@
 
 import java.io.*;
 import java.lang.annotation.*;
+import java.lang.management.ManagementFactory;
 import java.lang.reflect.*;
 import java.net.*;
 import java.util.*;
@@ -212,7 +213,9 @@ class TestCase implements Callable<TestCase> {
         });
 
         methodInvoker.start();
-        watchdog.start();
+        if (!virtualMachineIsDebugging()) {
+            watchdog.start();
+        }
         try {
             methodInvoker.join();
         } catch (InterruptedException ignored) { }
@@ -281,5 +284,14 @@ class TestCase implements Callable<TestCase> {
 
     public static String formatNanosToMillis(long nanos) {
         return String.format("%,.2f", nanos / 1e6);
+    }
+
+    private static boolean virtualMachineIsDebugging() {
+        String env = System.getenv("JAVA_TOOL_OPTIONS") + "";
+        List<String> vm = ManagementFactory.getRuntimeMXBean()
+                                           .getInputArguments();
+        return env.contains("-Xdebug") || env.contains("-agentlib:jdwp") ||
+               vm.stream().anyMatch(s -> s.contains("-Xdebug") ||
+                                         s.startsWith("-agentlib:jdwp"));
     }
 }
