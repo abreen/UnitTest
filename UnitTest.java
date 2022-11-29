@@ -6,12 +6,17 @@
 
 import java.io.*;
 import java.lang.annotation.*;
+import java.lang.management.ManagementFactory;
 import java.lang.reflect.*;
 import java.net.*;
+import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.List;
 import java.util.LinkedList;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import static java.nio.file.StandardWatchEventKinds.*;
 
 @Retention(RetentionPolicy.RUNTIME)
 @interface Test {
@@ -33,7 +38,65 @@ public class UnitTest {
     private long defaultTimeout = TIMEOUT_MILLISECONDS;
 
     public static void main(String[] args) throws InterruptedException {
-        String pattern = args.length > 0 ? args[0].trim() : "";
+        List<String> watchFlags = List.of("-w", "-watch", "--watch");
+        if (args.length == 0) {
+            main("");
+        } else if (!watchFlags.contains(args[0])) {
+            main(args[0].trim());
+        } else {
+            try {
+                String pattern = args.length > 1 ? args[1] : "";
+                startSubprocess(pattern).waitFor();
+
+                System.out.println("starting file watcher...");
+                WatchService watcher = getWatcher();
+                WatchKey key;
+                while ((key = watcher.take()) != null) {
+                    Optional<Path> changedFile =
+                        key.pollEvents().stream()
+                           .map(e -> Paths.get(e.context().toString()))
+                           .filter(UnitTest::isClassFile)
+                           .findFirst();
+                    if (changedFile.isEmpty()) {
+                        continue;
+                    }
+                    System.out.println("file changed: " + changedFile.get());
+                    startSubprocess(pattern).waitFor();
+                    System.out.println("waiting for file system changes...");
+                }
+            } catch (IOException e) {
+                System.err.println("watch mode failed: " + e);
+            }
+        }
+    }
+
+    private static WatchService getWatcher() throws IOException {
+        WatchEvent.Kind[] kinds = { ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY };
+        WatchService watcher = FileSystems.getDefault().newWatchService();
+
+        ClassLoader loader = UnitTest.class.getClassLoader();
+        List<Path> classPaths = UnitTest.getClassPaths(loader);
+        for (Path dir : classPaths) {
+            try (Stream<Path> files = Files.walk(dir, 12)) {
+                List<Path> classFiles = files.filter(UnitTest::isClassFile)
+                                             .collect(Collectors.toList());
+                for (Path path : classFiles) {
+                    System.out.println("register: " + path);
+                    path.register(watcher, kinds);
+                }
+            } catch (IOException ignored) { }
+        }
+        return watcher;
+    }
+
+    private static Process startSubprocess(String pattern) throws IOException {
+        ProcessBuilder builder = new ProcessBuilder();
+        builder.environment()
+               .put("CLASSPATH", System.getProperty("java.class.path"));
+        return builder.command("java", "UnitTest", pattern).inheritIO().start();
+    }
+
+    private static void main(String pattern) throws InterruptedException {
         if (!pattern.isEmpty()) {
             System.out.println("search pattern: " + pattern);
         }
@@ -42,47 +105,19 @@ public class UnitTest {
             UnitTest ut = new UnitTest();
             ut.loadClassesFromClasspath();
             ut.runTestCases(ut.buildTestCases(pattern), System.out);
-        } catch (IOException | ExecutionException | URISyntaxException e) {
+        } catch (ExecutionException e) {
             System.err.println("cannot run unit tests: " + e);
             System.exit(1);
         }
     }
 
-    public void loadClassesFromClasspath()
-        throws IOException, URISyntaxException
-    {
+    public void loadClassesFromClasspath() {
         ClassLoader loader = getClass().getClassLoader();
         loader.setDefaultAssertionStatus(true);
 
-        Enumeration<URL> classResources = loader.getResources("");
-        while (classResources.hasMoreElements()) {
-            URI fileUri = classResources.nextElement().toURI();
-            findClasses(loader, new File(fileUri), 12);
-        }
-    }
-
-    private void findClasses(ClassLoader loader, File dir, int depth) {
-        if (dir == null || !dir.isDirectory() || depth <= 0) {
-            return;
-        }
-        File[] files = dir.listFiles();
-        for (File f : Objects.requireNonNull(files)) {
-            String fileName = f.getName();
-            if (f.isFile() && fileName.toLowerCase().endsWith(".class")) {
-                loadClassUsingFileName(loader, f);
-            } else if (f.isDirectory()) {
-                findClasses(loader, f, depth - 1);
-            }
-        }
-    }
-
-    private void loadClassUsingFileName(ClassLoader loader, File f) {
-        String fileName = f.getName();
-        String className = fileName.substring(0,  fileName.length() - 6);
-        try {
-            addAnnotatedMethodsFromClass(loader.loadClass(className));
-        } catch (ClassNotFoundException e) {
-            System.err.println("could not load class: " + className);
+        List<Path> classPaths = getClassPaths(loader);
+        for (Path dir : classPaths) {
+            loadClasses(loader, dir);
         }
     }
 
@@ -153,6 +188,43 @@ public class UnitTest {
         );
     }
 
+    private static List<Path> getClassPaths(ClassLoader loader) {
+        List<Path> classPaths = new LinkedList<>();
+        try {
+            Enumeration<URL> classResources = loader.getResources("");
+            while (classResources.hasMoreElements()) {
+                URI fileUri = classResources.nextElement().toURI();
+                classPaths.add(Paths.get(fileUri));
+            }
+        } catch (IOException | URISyntaxException ignored) { }
+        return classPaths;
+    }
+
+    private void loadClasses(ClassLoader loader, Path dir) {
+        if (!Files.isDirectory(dir) || dir.startsWith(".")) {
+            return;
+        }
+        try (Stream<Path> files = Files.walk(dir, 12)) {
+            files.filter(UnitTest::isClassFile)
+                 .forEach(file -> loadClassUsingFileName(loader, file));
+        } catch (IOException ignored) { }
+    }
+
+    private void loadClassUsingFileName(ClassLoader loader, Path file) {
+        String fileName = file.getFileName().toString();
+        String className = fileName.substring(0,  fileName.length() - 6);
+        try {
+            addAnnotatedMethodsFromClass(loader.loadClass(className));
+        } catch (ClassNotFoundException e) {
+            System.err.println("could not load class: " + className);
+        }
+    }
+
+    private static boolean isClassFile(Path file) {
+        String fileName = file.getFileName().toString().toLowerCase();
+        return fileName.endsWith(".class") && Files.isRegularFile(file);
+    }
+
     private static boolean hasSkipAnnotation(Method method) {
         return method.getAnnotation(Skip.class) != null ||
                method.getDeclaringClass().getAnnotation(Skip.class) != null;
@@ -212,7 +284,9 @@ class TestCase implements Callable<TestCase> {
         });
 
         methodInvoker.start();
-        watchdog.start();
+        if (!virtualMachineIsDebugging()) {
+            watchdog.start();
+        }
         try {
             methodInvoker.join();
         } catch (InterruptedException ignored) { }
@@ -281,5 +355,14 @@ class TestCase implements Callable<TestCase> {
 
     public static String formatNanosToMillis(long nanos) {
         return String.format("%,.2f", nanos / 1e6);
+    }
+
+    private static boolean virtualMachineIsDebugging() {
+        String env = System.getenv("JAVA_TOOL_OPTIONS") + "";
+        List<String> vm = ManagementFactory.getRuntimeMXBean()
+                                           .getInputArguments();
+        return env.contains("-Xdebug") || env.contains("-agentlib:jdwp") ||
+               vm.stream().anyMatch(s -> s.contains("-Xdebug") ||
+                                         s.startsWith("-agentlib:jdwp"));
     }
 }
