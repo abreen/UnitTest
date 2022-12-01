@@ -9,10 +9,12 @@ import java.lang.annotation.*;
 import java.lang.management.ManagementFactory;
 import java.lang.reflect.*;
 import java.net.*;
+import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.List;
 import java.util.LinkedList;
+import java.util.stream.Stream;
 
 @Retention(RetentionPolicy.RUNTIME)
 @interface Test {
@@ -43,47 +45,19 @@ public class UnitTest {
             UnitTest ut = new UnitTest();
             ut.loadClassesFromClasspath();
             ut.runTestCases(ut.buildTestCases(pattern), System.out);
-        } catch (IOException | ExecutionException | URISyntaxException e) {
+        } catch (ExecutionException e) {
             System.err.println("cannot run unit tests: " + e);
             System.exit(1);
         }
     }
 
-    public void loadClassesFromClasspath()
-        throws IOException, URISyntaxException
-    {
+    public void loadClassesFromClasspath() {
         ClassLoader loader = getClass().getClassLoader();
         loader.setDefaultAssertionStatus(true);
 
-        Enumeration<URL> classResources = loader.getResources("");
-        while (classResources.hasMoreElements()) {
-            URI fileUri = classResources.nextElement().toURI();
-            findClasses(loader, new File(fileUri), 12);
-        }
-    }
-
-    private void findClasses(ClassLoader loader, File dir, int depth) {
-        if (dir == null || !dir.isDirectory() || depth <= 0) {
-            return;
-        }
-        File[] files = dir.listFiles();
-        for (File f : Objects.requireNonNull(files)) {
-            String fileName = f.getName();
-            if (f.isFile() && fileName.toLowerCase().endsWith(".class")) {
-                loadClassUsingFileName(loader, f);
-            } else if (f.isDirectory()) {
-                findClasses(loader, f, depth - 1);
-            }
-        }
-    }
-
-    private void loadClassUsingFileName(ClassLoader loader, File f) {
-        String fileName = f.getName();
-        String className = fileName.substring(0,  fileName.length() - 6);
-        try {
-            addAnnotatedMethodsFromClass(loader.loadClass(className));
-        } catch (ClassNotFoundException e) {
-            System.err.println("could not load class: " + className);
+        List<Path> classPaths = getClassPaths(loader);
+        for (Path dir : classPaths) {
+            loadClasses(loader, dir);
         }
     }
 
@@ -152,6 +126,43 @@ public class UnitTest {
             "%d tests, %d skipped, %d passed, %d failed\n",
             numCases, numSkipped, numPassed, numFailed
         );
+    }
+
+    private static List<Path> getClassPaths(ClassLoader loader) {
+        List<Path> classPaths = new LinkedList<>();
+        try {
+            Enumeration<URL> classResources = loader.getResources("");
+            while (classResources.hasMoreElements()) {
+                URI fileUri = classResources.nextElement().toURI();
+                classPaths.add(Paths.get(fileUri));
+            }
+        } catch (IOException | URISyntaxException ignored) { }
+        return classPaths;
+    }
+
+    private void loadClasses(ClassLoader loader, Path dir) {
+        if (!Files.isDirectory(dir) || dir.startsWith(".")) {
+            return;
+        }
+        try (Stream<Path> files = Files.walk(dir, 12)) {
+            files.filter(UnitTest::isClassFile)
+                 .forEach(file -> loadClassUsingFileName(loader, file));
+        } catch (IOException ignored) { }
+    }
+
+    private void loadClassUsingFileName(ClassLoader loader, Path file) {
+        String fileName = file.getFileName().toString();
+        String className = fileName.substring(0,  fileName.length() - 6);
+        try {
+            addAnnotatedMethodsFromClass(loader.loadClass(className));
+        } catch (ClassNotFoundException e) {
+            System.err.println("could not load class: " + className);
+        }
+    }
+
+    private static boolean isClassFile(Path file) {
+        String fileName = file.getFileName().toString().toLowerCase();
+        return fileName.endsWith(".class") && Files.isRegularFile(file);
     }
 
     private static boolean hasSkipAnnotation(Method method) {
