@@ -4,6 +4,7 @@
  * A simple unit testing framework.
  */
 
+import com.sun.nio.file.SensitivityWatchEventModifier;
 import java.io.*;
 import java.lang.annotation.*;
 import java.lang.management.ManagementFactory;
@@ -33,6 +34,9 @@ import static java.nio.file.StandardWatchEventKinds.*;
 
 public class UnitTest {
     public static final long TIMEOUT_MILLISECONDS = 2000;
+    private static final List<WatchEvent.Kind<Path>> KINDS =
+        List.of(ENTRY_CREATE, ENTRY_MODIFY);
+    private static final int DIR_DEPTH = 12;
 
     private List<Method> methods = new LinkedList<>();
     private long defaultTimeout = TIMEOUT_MILLISECONDS;
@@ -46,24 +50,20 @@ public class UnitTest {
         } else {
             try {
                 String pattern = args.length > 1 ? args[1] : "";
-                startSubprocess(pattern).waitFor();
-
-                System.out.println("starting file watcher...");
                 WatchService watcher = getWatcher();
-                WatchKey key;
-                while ((key = watcher.take()) != null) {
-                    Optional<Path> changedFile =
-                        key.pollEvents().stream()
-                           .map(e -> Paths.get(e.context().toString()))
-                           .filter(UnitTest::isClassFile)
-                           .findFirst();
-                    if (changedFile.isEmpty()) {
-                        continue;
+                WatchKey key = null;
+                do {
+                    if (key != null) {
+                        List<Path> changed = getChangedFiles(key);
+                        key.reset();
+                        if (changed.isEmpty()) {
+                            continue;
+                        }
+                        changed.forEach(f -> System.out.println("chg: " + f));
                     }
-                    System.out.println("file changed: " + changedFile.get());
                     startSubprocess(pattern).waitFor();
                     System.out.println("waiting for file system changes...");
-                }
+                } while ((key = watcher.take()) != null);
             } catch (IOException e) {
                 System.err.println("watch mode failed: " + e);
             }
@@ -71,22 +71,38 @@ public class UnitTest {
     }
 
     private static WatchService getWatcher() throws IOException {
-        WatchEvent.Kind[] kinds = { ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY };
         WatchService watcher = FileSystems.getDefault().newWatchService();
+        registerClassPaths(watcher);
+        return watcher;
+    }
 
+    private static List<Path> getChangedFiles(WatchKey key) {
+        return key.pollEvents().stream()
+                  .filter(e -> KINDS.contains(e.kind()))
+                  .map(e -> (Path)e.context())
+                  .filter(p -> p.toString().endsWith(".class"))
+                  .collect(Collectors.toList());
+    }
+
+    private static void registerClassPaths(WatchService watcher) {
         ClassLoader loader = UnitTest.class.getClassLoader();
-        List<Path> classPaths = UnitTest.getClassPaths(loader);
-        for (Path dir : classPaths) {
-            try (Stream<Path> files = Files.walk(dir, 12)) {
-                List<Path> classFiles = files.filter(UnitTest::isClassFile)
-                                             .collect(Collectors.toList());
-                for (Path path : classFiles) {
-                    System.out.println("register: " + path);
-                    path.register(watcher, kinds);
-                }
+        for (Path classPathDir : UnitTest.getClassPaths(loader)) {
+            registerPath(watcher, classPathDir);
+            try (Stream<Path> files = Files.walk(classPathDir, DIR_DEPTH)) {
+                files.filter(Files::isDirectory)
+                     .forEach(subdir -> registerPath(watcher, subdir));
             } catch (IOException ignored) { }
         }
-        return watcher;
+    }
+
+    private static void registerPath(WatchService watcher, Path path) {
+        try {
+            WatchEvent.Kind<?>[] kinds = new WatchEvent.Kind<?>[KINDS.size()];
+            kinds = KINDS.toArray(kinds);
+            path.register(watcher, kinds, SensitivityWatchEventModifier.HIGH);
+        } catch (IOException e) {
+            System.err.println("could not register path for watching: " + e);
+        }
     }
 
     private static Process startSubprocess(String pattern) throws IOException {
@@ -100,7 +116,6 @@ public class UnitTest {
         if (!pattern.isEmpty()) {
             System.out.println("search pattern: " + pattern);
         }
-
         try {
             UnitTest ut = new UnitTest();
             ut.loadClassesFromClasspath();
@@ -119,13 +134,10 @@ public class UnitTest {
     }
 
     public void addAnnotatedMethodsFromClass(Class<?> c) {
-        for (Method method : c.getMethods()) {
-            if (method.getAnnotation(Test.class) != null &&
-                Modifier.isStatic(method.getModifiers())
-            ) {
-                this.addMethod(method);
-            }
-        }
+        Arrays.stream(c.getMethods())
+            .filter(m -> m.getAnnotation(Test.class) != null)
+            .filter(m -> Modifier.isStatic(m.getModifiers()))
+            .forEach(this::addMethod);
     }
 
     public void addMethod(Method method) {
@@ -198,11 +210,8 @@ public class UnitTest {
     }
 
     private void loadClasses(ClassLoader loader, Path dir) {
-        if (!Files.isDirectory(dir) || dir.startsWith(".")) {
-            return;
-        }
-        try (Stream<Path> files = Files.walk(dir, 12)) {
-            files.filter(UnitTest::isClassFile)
+        try (Stream<Path> files = Files.walk(dir, DIR_DEPTH)) {
+            files.filter(f -> f.toString().endsWith(".class"))
                  .forEach(file -> loadClassUsingFileName(loader, file));
         } catch (IOException ignored) { }
     }
@@ -215,11 +224,6 @@ public class UnitTest {
         } catch (ClassNotFoundException e) {
             System.err.println("could not load class: " + className);
         }
-    }
-
-    private static boolean isClassFile(Path file) {
-        String fileName = file.getFileName().toString().toLowerCase();
-        return fileName.endsWith(".class") && Files.isRegularFile(file);
     }
 
     private static boolean hasSkipAnnotation(Method method) {
