@@ -115,10 +115,7 @@ public class UnitTest {
         ClassLoader loader = getClass().getClassLoader();
         loader.setDefaultAssertionStatus(true);
 
-        List<Path> classPaths = getClassPaths(loader);
-        for (Path dir : classPaths) {
-            loadClasses(loader, dir);
-        }
+        getClassPaths(loader).forEach(dir -> loadClasses(loader, dir));
     }
 
     public void addAnnotatedMethodsFromClass(Class<?> c) {
@@ -212,7 +209,7 @@ public class UnitTest {
 
     private void loadClassUsingFileName(ClassLoader loader, Path file) {
         String fileName = file.getFileName().toString();
-        String className = fileName.substring(0,  fileName.length() - 6);
+        String className = fileName.substring(0, fileName.length() - 6);
         try {
             addAnnotatedMethodsFromClass(loader.loadClass(className));
         } catch (ClassNotFoundException e) {
@@ -309,7 +306,7 @@ class TestCase implements Callable<TestCase> {
 
     private void printError(PrintStream out) {
         if (error instanceof InterruptedException) {
-            out.printf("\n       test case timed out after %,d ms",  timeout);
+            out.printf("\n       test case timed out after %,d ms", timeout);
             return;
         }
         if (error instanceof AssertionError) {
