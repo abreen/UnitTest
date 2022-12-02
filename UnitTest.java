@@ -41,77 +41,6 @@ public class UnitTest {
     private List<Method> methods = new LinkedList<>();
     private long defaultTimeout = TIMEOUT_MILLISECONDS;
 
-    public static void main(String[] args) throws InterruptedException {
-        List<String> watchFlags = List.of("-w", "-watch", "--watch");
-        if (args.length == 0) {
-            main("");
-        } else if (!watchFlags.contains(args[0])) {
-            main(args[0].trim());
-        } else {
-            try {
-                String pattern = args.length > 1 ? args[1] : "";
-                WatchService watcher = getWatcher();
-                WatchKey key = null;
-                do {
-                    if (key != null) {
-                        List<Path> changed = getChangedFiles(key);
-                        key.reset();
-                        if (changed.isEmpty()) {
-                            continue;
-                        }
-                        changed.forEach(f -> System.out.println("chg: " + f));
-                    }
-                    startSubprocess(pattern).waitFor();
-                    System.out.println("waiting for file system changes...");
-                } while ((key = watcher.take()) != null);
-            } catch (IOException e) {
-                System.err.println("watch mode failed: " + e);
-            }
-        }
-    }
-
-    private static WatchService getWatcher() throws IOException {
-        WatchService watcher = FileSystems.getDefault().newWatchService();
-        registerClassPaths(watcher);
-        return watcher;
-    }
-
-    private static List<Path> getChangedFiles(WatchKey key) {
-        return key.pollEvents().stream()
-                  .filter(e -> KINDS.contains(e.kind()))
-                  .map(e -> (Path)e.context())
-                  .filter(p -> p.toString().endsWith(".class"))
-                  .collect(Collectors.toList());
-    }
-
-    private static void registerClassPaths(WatchService watcher) {
-        ClassLoader loader = UnitTest.class.getClassLoader();
-        for (Path classPathDir : UnitTest.getClassPaths(loader)) {
-            registerPath(watcher, classPathDir);
-            try (Stream<Path> files = Files.walk(classPathDir, DIR_DEPTH)) {
-                files.filter(Files::isDirectory)
-                     .forEach(subdir -> registerPath(watcher, subdir));
-            } catch (IOException ignored) { }
-        }
-    }
-
-    private static void registerPath(WatchService watcher, Path path) {
-        try {
-            WatchEvent.Kind<?>[] kinds = new WatchEvent.Kind<?>[KINDS.size()];
-            kinds = KINDS.toArray(kinds);
-            path.register(watcher, kinds, SensitivityWatchEventModifier.HIGH);
-        } catch (IOException e) {
-            System.err.println("could not register path for watching: " + e);
-        }
-    }
-
-    private static Process startSubprocess(String pattern) throws IOException {
-        ProcessBuilder builder = new ProcessBuilder();
-        builder.environment()
-               .put("CLASSPATH", System.getProperty("java.class.path"));
-        return builder.command("java", "UnitTest", pattern).inheritIO().start();
-    }
-
     private static void main(String pattern) throws InterruptedException {
         if (!pattern.isEmpty()) {
             System.out.println("search pattern: " + pattern);
@@ -131,6 +60,35 @@ public class UnitTest {
         loader.setDefaultAssertionStatus(true);
 
         getClassPaths(loader).forEach(dir -> loadClasses(loader, dir));
+    }
+
+    private static List<Path> getClassPaths(ClassLoader loader) {
+        List<Path> classPaths = new LinkedList<>();
+        try {
+            Enumeration<URL> classResources = loader.getResources("");
+            while (classResources.hasMoreElements()) {
+                URI fileUri = classResources.nextElement().toURI();
+                classPaths.add(Paths.get(fileUri));
+            }
+        } catch (IOException | URISyntaxException ignored) { }
+        return classPaths;
+    }
+
+    private void loadClasses(ClassLoader loader, Path dir) {
+        try (Stream<Path> files = Files.walk(dir, DIR_DEPTH)) {
+            files.filter(f -> f.toString().endsWith(".class"))
+                 .forEach(file -> loadClassUsingFileName(loader, file));
+        } catch (IOException ignored) { }
+    }
+
+    private void loadClassUsingFileName(ClassLoader loader, Path file) {
+        String fileName = file.getFileName().toString();
+        String className = fileName.substring(0, fileName.length() - 6);
+        try {
+            addAnnotatedMethodsFromClass(loader.loadClass(className));
+        } catch (ClassNotFoundException e) {
+            System.err.println("could not load class: " + className);
+        }
     }
 
     public void addAnnotatedMethodsFromClass(Class<?> c) {
@@ -168,7 +126,7 @@ public class UnitTest {
 
         int numSkipped = 0;
         for (TestCase testCase : cases) {
-            if (hasSkipAnnotation(testCase.getMethod())) {
+            if (testCase.methodHasSkipAnnotation()) {
                 testCase.printResult(out);
                 numSkipped++;
             } else {
@@ -197,38 +155,79 @@ public class UnitTest {
         );
     }
 
-    private static List<Path> getClassPaths(ClassLoader loader) {
-        List<Path> classPaths = new LinkedList<>();
-        try {
-            Enumeration<URL> classResources = loader.getResources("");
-            while (classResources.hasMoreElements()) {
-                URI fileUri = classResources.nextElement().toURI();
-                classPaths.add(Paths.get(fileUri));
-            }
-        } catch (IOException | URISyntaxException ignored) { }
-        return classPaths;
+    private static WatchService getWatcher() throws IOException {
+        WatchService watcher = FileSystems.getDefault().newWatchService();
+        registerClassPaths(watcher);
+        return watcher;
     }
 
-    private void loadClasses(ClassLoader loader, Path dir) {
-        try (Stream<Path> files = Files.walk(dir, DIR_DEPTH)) {
-            files.filter(f -> f.toString().endsWith(".class"))
-                 .forEach(file -> loadClassUsingFileName(loader, file));
-        } catch (IOException ignored) { }
-    }
-
-    private void loadClassUsingFileName(ClassLoader loader, Path file) {
-        String fileName = file.getFileName().toString();
-        String className = fileName.substring(0, fileName.length() - 6);
-        try {
-            addAnnotatedMethodsFromClass(loader.loadClass(className));
-        } catch (ClassNotFoundException e) {
-            System.err.println("could not load class: " + className);
+    private static void registerClassPaths(WatchService watcher) {
+        ClassLoader loader = UnitTest.class.getClassLoader();
+        for (Path classPathDir : UnitTest.getClassPaths(loader)) {
+            registerPath(watcher, classPathDir);
+            try (Stream<Path> files = Files.walk(classPathDir, DIR_DEPTH)) {
+                files.filter(Files::isDirectory)
+                     .forEach(subdir -> registerPath(watcher, subdir));
+            } catch (IOException ignored) { }
         }
     }
 
-    private static boolean hasSkipAnnotation(Method method) {
-        return method.getAnnotation(Skip.class) != null ||
-               method.getDeclaringClass().getAnnotation(Skip.class) != null;
+    private static void registerPath(WatchService watcher, Path path) {
+        try {
+            WatchEvent.Kind<?>[] kinds = new WatchEvent.Kind<?>[KINDS.size()];
+            kinds = KINDS.toArray(kinds);
+            path.register(watcher, kinds, SensitivityWatchEventModifier.HIGH);
+        } catch (IOException e) {
+            System.err.println("could not register path for watching: " + e);
+        }
+    }
+
+    private static Process startSubprocess(String pattern) throws IOException {
+        ProcessBuilder builder = new ProcessBuilder();
+        builder.environment()
+               .put("CLASSPATH", System.getProperty("java.class.path"));
+        return builder.command("java", "UnitTest", pattern).inheritIO().start();
+    }
+
+    private static List<Path> getChangedFiles(WatchKey key) {
+        return key.pollEvents().stream()
+                  .filter(e -> KINDS.contains(e.kind()))
+                  .map(e -> (Path)e.context())
+                  .filter(p -> p.toString().endsWith(".class"))
+                  .collect(Collectors.toList());
+    }
+
+    private static void printChangedFile(Path file) {
+        System.out.println("changed: " + file.toAbsolutePath());
+    }
+
+    public static void main(String[] args) throws InterruptedException {
+        List<String> watchFlags = List.of("-w", "-watch", "--watch");
+        if (args.length == 0) {
+            main("");
+        } else if (!watchFlags.contains(args[0])) {
+            main(args[0].trim());
+        } else {
+            try {
+                String pattern = args.length > 1 ? args[1] : "";
+                WatchService watcher = getWatcher();
+                WatchKey key = null;
+                do {
+                    if (key != null) {
+                        List<Path> changed = getChangedFiles(key);
+                        key.reset();
+                        if (changed.isEmpty()) {
+                            continue;
+                        }
+                        changed.forEach(UnitTest::printChangedFile);
+                    }
+                    startSubprocess(pattern).waitFor();
+                    System.out.println("waiting for file system changes...");
+                } while ((key = watcher.take()) != null);
+            } catch (IOException e) {
+                System.err.println("watch mode failed: " + e);
+            }
+        }
     }
 }
 
@@ -247,8 +246,9 @@ class TestCase implements Callable<TestCase> {
         return start > 0 && end > 0;
     }
 
-    public Method getMethod() {
-        return method;
+    public boolean methodHasSkipAnnotation() {
+        return method.getAnnotation(Skip.class) != null ||
+               method.getDeclaringClass().getAnnotation(Skip.class) != null;
     }
 
     public Throwable getError() {
