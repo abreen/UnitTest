@@ -93,9 +93,9 @@ public class UnitTest {
 
     public void addAnnotatedMethodsFromClass(Class<?> c) {
         Arrays.stream(c.getMethods())
-            .filter(m -> m.getAnnotation(Test.class) != null)
-            .filter(m -> Modifier.isStatic(m.getModifiers()))
-            .forEach(this::addMethod);
+              .filter(m -> m.getAnnotation(Test.class) != null)
+              .filter(m -> Modifier.isStatic(m.getModifiers()))
+              .forEach(this::addMethod);
     }
 
     public void addMethod(Method method) {
