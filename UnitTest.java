@@ -264,7 +264,11 @@ class TestCase implements Callable<TestCase> {
         String green = "\u001b[32m", red = "\u001b[31m", reset = "\u001b[0m";
         if (!finished()) {
             return "skip";
-        } else if (error == null) {
+        }
+        if (!terminalSupportsColor()) {
+            reset = red = green = "";
+        }
+        if (error == null) {
             return green + "pass" + reset;
         }
         return red + "fail" + reset;
@@ -301,5 +305,12 @@ class TestCase implements Callable<TestCase> {
         return env.contains("-Xdebug") || env.contains("-agentlib:jdwp") ||
                vm.stream().anyMatch(s -> s.contains("-Xdebug") ||
                                          s.startsWith("-agentlib:jdwp"));
+    }
+
+    private static boolean terminalSupportsColor() {
+        return List.of("intellij", "vscode", "color").stream().anyMatch(s ->
+            ("" + System.getenv("TERM") + System.getenv("TERM_PROGRAM")
+                + System.getenv("XPC_SERVICE_NAME")).contains(s)
+        );
     }
 }
