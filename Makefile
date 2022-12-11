@@ -1,10 +1,14 @@
-.PHONY: run clean
+.PHONY: run test clean
+build_dir = build
 
-out:
-	javac -d out *.java
+build:
+	javac -d $(build_dir) *.java
 
-run: out
-	java -cp out UnitTest
+run: build
+	java -cp .:$(build_dir) UnitTest
+
+test: build
+	java -cp .:$(build_dir) UnitTest UnitTestTest
 
 clean:
-	rm -rf out
+	rm -rf $(build_dir)
